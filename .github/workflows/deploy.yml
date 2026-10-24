@@ -1,0 +1,88 @@
+
+name: Deploy Sangju Civic Square
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare website
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import json
+          import shutil
+          from pathlib import Path
+
+          url = os.environ.get("SUPABASE_URL", "").strip()
+          key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+
+          if not url.startswith("https://") or not url.endswith(".supabase.co"):
+              raise SystemExit("SUPABASE_URL setting is missing or invalid")
+          if not (key.startswith("sb_publishable_") or key.startswith("eyJ")):
+              raise SystemExit("SUPABASE_ANON_KEY setting is missing or invalid")
+
+          site = Path("_site")
+          site.mkdir(exist_ok=True)
+
+          for item in Path(".").iterdir():
+              if item.name in (".git", ".github", "_site"):
+                  continue
+              target = site / item.name
+              if item.is_dir():
+                  shutil.copytree(item, target, dirs_exist_ok=True)
+              else:
+                  shutil.copy2(item, target)
+
+          if not (site / "index.html").exists():
+              if (site / "index-2.html").exists():
+                  shutil.copy2(site / "index-2.html", site / "index.html")
+              else:
+                  raise SystemExit("index.html and index-2.html are missing")
+
+          config = {
+              "supabaseUrl": url,
+              "supabaseAnonKey": key
+          }
+          (site / "config.js").write_text(
+              "window.SANGJU_CONFIG = " +
+              json.dumps(config) + ";\n",
+              encoding="utf-8"
+          )
+          print("Website files prepared")
+          PY
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./_site
+
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4
